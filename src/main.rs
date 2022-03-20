@@ -17,6 +17,73 @@ fn main() {
         parse(&mut Scanner::new("map shift left"))
     );
     println!("map lemon: {:?}", parse(&mut Scanner::new("map lemon")));
+
+    println!();
+
+    println!("take_id a: {:?}", Scanner::new("a").take_id());
+
+    test_lex("0");
+    test_lex("a");
+    test_lex("-");
+    test_lex("abra");
+}
+
+fn test_lex(input: &str) {
+    println!("{}: {:?}", input, lex(&mut Scanner::new(input)));
+}
+
+fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
+    // let lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> = vec![&lex_digit, &lex_letter];
+    let lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> = vec![&lex_id];
+
+    let mut tokens = vec![];
+
+    'scanner: while !scanner.is_done() {
+        for lexer in &lexers {
+            if let Ok(token) = lexer(scanner) {
+                tokens.push(token);
+                continue 'scanner;
+            }
+        }
+
+        return Err(ParseError::Message("Failed to finish lexing.".to_string()));
+    }
+
+    Ok(tokens)
+}
+
+fn lex_id(scanner: &mut Scanner) -> Result<Token> {
+    scanner.take_id().map(Token::Id)
+}
+
+fn lex_digit(scanner: &mut Scanner) -> Result<Token> {
+    match scanner.pop_in_range('0'..='9') {
+        Some(ch) => Ok(Token::Digit(ch)),
+        None => Err(ParseError::ExpectedDigit),
+    }
+}
+
+fn lex_letter(scanner: &mut Scanner) -> Result<Token> {
+    let lowercase = scanner.pop_in_range('a'..='z');
+
+    if let Some(letter) = lowercase {
+        return Ok(Token::Letter(letter));
+    }
+
+    let uppercase = scanner.pop_in_range('a'..='Z');
+
+    if let Some(letter) = uppercase {
+        return Ok(Token::Letter(letter));
+    }
+
+    Err(ParseError::ExpectedLetter)
+}
+
+#[derive(Debug)]
+enum Token {
+    Letter(char),
+    Digit(char),
+    Id(String),
 }
 
 fn parse(scanner: &mut Scanner) -> Result<Map> {
@@ -237,6 +304,31 @@ impl Scanner {
             None => None,
         }
     }
+
+    pub fn take_id(&mut self) -> ParseResult<String> {
+        let mut curr_index = self.cursor;
+        let mut buf = String::new();
+
+        while curr_index < buf.len() {
+            let ch = self.characters[curr_index];
+
+            if ('a'..='z').contains(&ch) || ('A'..='Z').contains(&ch) {
+                buf.push(ch);
+            } else {
+                break;
+            }
+
+            curr_index += 1;
+        }
+
+        if buf.is_empty() {
+            return Err(ParseError::ExpectedId);
+        }
+
+        self.cursor = curr_index;
+
+        Ok(buf)
+    }
 }
 
 #[derive(Debug)]
@@ -244,6 +336,9 @@ pub enum ParseError {
     Message(String),
     Expected(char),
     ExpectedPhrase(String),
+    ExpectedDigit,
+    ExpectedLetter,
+    ExpectedId,
 }
 
 impl From<&str> for ParseError {
