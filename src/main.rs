@@ -20,12 +20,12 @@ fn main() {
 
     println!();
 
-    println!("take_id a: {:?}", Scanner::new("a").take_id());
-
-    test_lex("0");
+    test_lex("ctrl");
     test_lex("a");
     test_lex("-");
     test_lex("abra");
+    test_lex("map ctrl");
+    test_lex("map ctrl+a");
 }
 
 fn test_lex(input: &str) {
@@ -33,8 +33,14 @@ fn test_lex(input: &str) {
 }
 
 fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
-    // let lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> = vec![&lex_digit, &lex_letter];
-    let lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> = vec![&lex_id];
+    let lex_map = lex_phrase("map ");
+    let lex_plus = lex_phrase("+");
+
+    // NOTE(Chris): The order matters here, in case one lexing rule conflicts with another.
+    let mut lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> =
+        vec![&lex_mod, &lex_map, &lex_plus];
+
+    lexers.push(&lex_id);
 
     let mut tokens = vec![];
 
@@ -53,37 +59,73 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
 }
 
 fn lex_id(scanner: &mut Scanner) -> Result<Token> {
-    scanner.take_id().map(Token::Id)
+    let mut buf = String::new();
+
+    loop {
+        let lowercase = scanner.pop_in_range('a'..='z');
+
+        if let Some(letter) = lowercase {
+            buf.push(letter);
+            continue;
+        }
+
+        let uppercase = scanner.pop_in_range('a'..='z');
+
+        if let Some(letter) = uppercase {
+            buf.push(letter);
+            continue;
+        }
+
+        break;
+    }
+
+    if buf.is_empty() {
+        Err(ParseError::ExpectedId)
+    } else {
+        Ok(Token::Id(buf))
+    }
 }
 
-fn lex_digit(scanner: &mut Scanner) -> Result<Token> {
-    match scanner.pop_in_range('0'..='9') {
-        Some(ch) => Ok(Token::Digit(ch)),
-        None => Err(ParseError::ExpectedDigit),
+fn lex_mod(scanner: &mut Scanner) -> Result<Token> {
+    if scanner.take_str("ctrl") {
+        Ok(Token::Mod(Mod::Ctrl))
+    } else if scanner.take_str("shift") {
+        Ok(Token::Mod(Mod::Shift))
+    } else if scanner.take_str("alt") {
+        Ok(Token::Mod(Mod::Alt))
+    } else {
+        Err(ParseError::from(
+            "A modifier requires a ctrl, shift, or alt",
+        ))
     }
+}
+
+fn lex_phrase(phrase: &'static str) -> Box<dyn Fn(&mut Scanner) -> Result<Token>> {
+    Box::new(move |scanner: &mut Scanner| {
+        if scanner.take_str(phrase) {
+            Ok(Token::Phrase(phrase))
+        } else {
+            Err(ParseError::ExpectedPhrase(phrase))
+        }
+    })
 }
 
 fn lex_letter(scanner: &mut Scanner) -> Result<Token> {
-    let lowercase = scanner.pop_in_range('a'..='z');
-
-    if let Some(letter) = lowercase {
-        return Ok(Token::Letter(letter));
-    }
-
-    let uppercase = scanner.pop_in_range('a'..='Z');
-
-    if let Some(letter) = uppercase {
-        return Ok(Token::Letter(letter));
-    }
-
-    Err(ParseError::ExpectedLetter)
+    scanner
+        .pop_in_range('a'..='z')
+        .or_else(|| scanner.pop_in_range('A'..='Z'))
+        .map_or_else(
+            || Err(ParseError::ExpectedLetter),
+            |ch| Ok(Token::Letter(ch)),
+        )
 }
 
 #[derive(Debug)]
 enum Token {
-    Letter(char),
-    Digit(char),
     Id(String),
+    Mod(Mod),
+    Letter(char),
+    Phrase(&'static str),
 }
 
 fn parse(scanner: &mut Scanner) -> Result<Map> {
@@ -97,7 +139,7 @@ fn parse(scanner: &mut Scanner) -> Result<Map> {
 }
 
 fn parse_map(scanner: &mut Scanner) -> Result<Map> {
-    scanner.expect_str("map ")?;
+    // scanner.expect_str("map ")?;
 
     let key = parse_key(scanner)?;
 
@@ -141,9 +183,7 @@ fn parse_mod(scanner: &mut Scanner) -> Result<Mod> {
     } else if scanner.take_str("alt") {
         Ok(Mod::Alt)
     } else {
-        Err(ParseError::from(
-            "A modifier requires a ctrl, shift, or alt",
-        ))
+        Err(ParseError::ExpectedMod)
     }
 }
 
@@ -281,14 +321,6 @@ impl Scanner {
         true
     }
 
-    pub fn expect_str(&mut self, target: &str) -> ParseResult<()> {
-        if self.take_str(target) {
-            Ok(())
-        } else {
-            Err(ParseError::ExpectedPhrase(target.to_string()))
-        }
-    }
-
     /// Invoke `cb` once. If the result is not `None`, return it and advance
     /// the cursor. Otherwise, return None and leave the cursor unchanged.
     pub fn transform<T>(&mut self, cb: impl FnOnce(&char) -> Option<T>) -> Option<T> {
@@ -304,41 +336,17 @@ impl Scanner {
             None => None,
         }
     }
-
-    pub fn take_id(&mut self) -> ParseResult<String> {
-        let mut curr_index = self.cursor;
-        let mut buf = String::new();
-
-        while curr_index < buf.len() {
-            let ch = self.characters[curr_index];
-
-            if ('a'..='z').contains(&ch) || ('A'..='Z').contains(&ch) {
-                buf.push(ch);
-            } else {
-                break;
-            }
-
-            curr_index += 1;
-        }
-
-        if buf.is_empty() {
-            return Err(ParseError::ExpectedId);
-        }
-
-        self.cursor = curr_index;
-
-        Ok(buf)
-    }
 }
 
 #[derive(Debug)]
 pub enum ParseError {
     Message(String),
     Expected(char),
-    ExpectedPhrase(String),
+    ExpectedPhrase(&'static str),
     ExpectedDigit,
     ExpectedLetter,
     ExpectedId,
+    ExpectedMod,
 }
 
 impl From<&str> for ParseError {
