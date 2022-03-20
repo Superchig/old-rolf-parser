@@ -1,0 +1,91 @@
+fn main() {
+    let conf_str = "#";
+
+    let mut scanner = Scanner::new(conf_str);
+
+    println!("#: {:?}", value(&mut scanner));
+}
+
+fn value(scanner: &mut Scanner) -> Option<u8> {
+    scanner.transform(|ch| match ch {
+        '$' => Some(1),
+        '#' => Some(2),
+        _ => None,
+    })
+}
+
+pub struct Scanner {
+    cursor: usize,
+    characters: Vec<char>,
+}
+
+impl Scanner {
+    pub fn new(string: &str) -> Self {
+        Self {
+            cursor: 0,
+            characters: string.chars().collect(),
+        }
+    }
+
+    /// Returns the current cursor. Useful for reporting errors.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Returns the next character without advancing the cursor.
+    /// AKA "lookahead"
+    pub fn peek(&self) -> Option<&char> {
+        self.characters.get(self.cursor)
+    }
+
+    /// Returns true if further progress is not possible
+    pub fn is_done(&self) -> bool {
+        self.cursor >= self.characters.len()
+    }
+
+    /// Returns the next character (if available) and advances the cursor.
+    pub fn pop(&mut self) -> Option<&char> {
+        match self.characters.get(self.cursor) {
+            Some(character) => {
+                self.cursor += 1;
+
+                Some(character)
+            }
+            None => None,
+        }
+    }
+
+    /// Returns true if the `target` is found at the current cursor position,
+    /// and advances the cursor.
+    /// Otherwise, returns false leaving the cursor unchanged.
+    pub fn take(&mut self, target: &char) -> bool {
+        match self.characters.get(self.cursor) {
+            Some(character) => {
+                if target == character {
+                    self.cursor += 1;
+
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
+    }
+
+    /// Invoke `cb` once. If the result is not `None`, return it and advance
+    /// the cursor. Otherwise, return None and leave the cursor unchanged.
+    pub fn transform<T>(&mut self, cb: impl FnOnce(&char) -> Option<T>) -> Option<T> {
+        match self.characters.get(self.cursor) {
+            Some(input) => match cb(input) {
+                Some(output) => {
+                    self.cursor += 1;
+
+                    Some(output)
+                }
+                None => None,
+            },
+            None => None,
+        }
+    }
+}

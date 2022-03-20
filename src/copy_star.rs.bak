@@ -1,0 +1,76 @@
+fn main() {
+    let conf_str = "**";
+
+    let mut scanner = Scanner::new(conf_str);
+
+    println!("**: {}", parse_string(&mut scanner));
+    println!("*: {}", parse_string(&mut Scanner::new("*")));
+    println!(": {}", parse_string(&mut Scanner::new("")));
+    println!("--: {}", parse_string(&mut Scanner::new("--")));
+}
+
+fn parse_string(scanner: &mut Scanner) -> bool {
+    if !scanner.take(&'*') {
+        return false;
+    }
+
+    while scanner.take(&'*') {
+    }
+
+    scanner.is_done()
+}
+
+pub struct Scanner {
+    cursor: usize,
+    characters: Vec<char>,
+}
+
+impl Scanner {
+    pub fn new(string: &str) -> Self {
+        Self {
+            cursor: 0,
+            characters: string.chars().collect(),
+        }
+    }
+
+    /// Returns the current cursor. Useful for reporting errors.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Returns the next character without advancing the cursor.
+    /// AKA "lookahead"
+    pub fn peek(&self) -> Option<&char> {
+        self.characters.get(self.cursor)
+    }
+
+    /// Returns true if further progress is not possible
+    pub fn is_done(&self) -> bool {
+        self.cursor >= self.characters.len()
+    }
+
+    /// Returns the next character (if available) and advances the cursor.
+    pub fn pop(&mut self) -> Option<&char> {
+        match self.characters.get(self.cursor) {
+            Some(character) => {
+                self.cursor += 1;
+
+                Some(character)
+            }
+            None => None,
+        }
+    }
+
+    pub fn take(&mut self, target: &char) -> bool {
+        match self.characters.get(self.cursor) {
+            Some(character) => if target == character {
+                self.cursor += 1;
+
+                true
+            } else {
+                false
+            }
+            None => false
+        }
+    }
+}
