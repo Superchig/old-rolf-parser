@@ -33,7 +33,7 @@ fn test_parse(input: &str) {
 }
 
 fn lex(scanner: &mut Scanner) -> LexResult<Vec<Token>> {
-    let lex_map = lex_phrase("map ");
+    let lex_map = lex_phrase("map");
     let lex_plus = lex_phrase("+");
 
     // NOTE(Chris): The order matters here, in case one lexing rule conflicts with another.
@@ -169,7 +169,9 @@ fn parse(parser: &mut Parser) -> ParseResult<Map> {
 }
 
 fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
-    parser.expect(TokenKind::Phrase("map "))?;
+    parser.expect(TokenKind::Phrase("map"))?;
+
+    parser.expect(TokenKind::Whitespace)?;
 
     let key = parse_key(parser)?;
 
@@ -304,7 +306,7 @@ impl Parser {
     }
 }
 
-// FIXME(Chris): Move EOF to position
+// FIXME(Chris): Move EOF to position/conflict area
 #[derive(Debug)]
 pub struct ParseError {
     position: Option<Position>,
