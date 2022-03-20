@@ -26,6 +26,7 @@ fn main() {
     test_lex("abra");
     test_lex("map ctrl");
     test_lex("map ctrl+a");
+    test_lex("map ctrl+k up");
 }
 
 fn test_lex(input: &str) {
@@ -38,7 +39,7 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
 
     // NOTE(Chris): The order matters here, in case one lexing rule conflicts with another.
     let mut lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> =
-        vec![&lex_mod, &lex_map, &lex_plus];
+        vec![&lex_mod, &lex_whitespace, &lex_map, &lex_plus];
 
     lexers.push(&lex_id);
 
@@ -51,6 +52,8 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
                 continue 'scanner;
             }
         }
+
+        eprintln!("failed tokens: {:#?}", tokens);
 
         return Err(ParseError::Message("Failed to finish lexing.".to_string()));
     }
@@ -110,22 +113,26 @@ fn lex_phrase(phrase: &'static str) -> Box<dyn Fn(&mut Scanner) -> Result<Token>
     })
 }
 
-fn lex_letter(scanner: &mut Scanner) -> Result<Token> {
-    scanner
-        .pop_in_range('a'..='z')
-        .or_else(|| scanner.pop_in_range('A'..='Z'))
-        .map_or_else(
-            || Err(ParseError::ExpectedLetter),
-            |ch| Ok(Token::Letter(ch)),
-        )
+fn lex_whitespace(scanner: &mut Scanner) -> Result<Token> {
+    let mut was_whitespace = false;
+
+    while let Some(_ch) = scanner.pop_in_slice(&[' ', '\t']) {
+        was_whitespace = true;
+    }
+
+    if was_whitespace {
+        Ok(Token::Whitespace)
+    } else {
+        Err(ParseError::ExpectedWhitespace)
+    }
 }
 
 #[derive(Debug)]
 enum Token {
     Id(String),
     Mod(Mod),
-    Letter(char),
     Phrase(&'static str),
+    Whitespace,
 }
 
 fn parse(scanner: &mut Scanner) -> Result<Map> {
@@ -265,6 +272,25 @@ impl Scanner {
         }
     }
 
+    /// Returns the next character if it's in the given slice, and advances the cursor.
+    /// Otherwise, returns None, leaving the cursor unchanged.
+    pub fn pop_in_slice(&mut self, range_slice: &[char]) -> Option<char> {
+        match self.peek() {
+            Some(ch) => {
+                if range_slice.contains(ch) {
+                    let copy = *ch;
+
+                    self.pop();
+
+                    Some(copy)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     /// Returns true if the `target` is found at the current cursor position,
     /// and advances the cursor.
     /// Otherwise, returns false, leaving the cursor unchanged.
@@ -347,6 +373,7 @@ pub enum ParseError {
     ExpectedLetter,
     ExpectedId,
     ExpectedMod,
+    ExpectedWhitespace,
 }
 
 impl From<&str> for ParseError {
