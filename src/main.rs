@@ -1,25 +1,10 @@
 use core::fmt;
-use std::{error::Error, ops};
+use std::{error::Error, ops, mem};
 
 type ParseResult<T> = std::result::Result<T, ParseError>;
 type Result<T> = ParseResult<T>;
 
 fn main() {
-    let conf_str = "map ctrl+b";
-
-    let mut scanner = Scanner::new(conf_str);
-
-    println!("{}: {:?}", conf_str, parse(&mut scanner));
-    println!("map alt: {:?}", parse(&mut Scanner::new("map alt")));
-    println!("map shift: {:?}", parse(&mut Scanner::new("map shift")));
-    println!(
-        "map shift left: {:?}",
-        parse(&mut Scanner::new("map shift left"))
-    );
-    println!("map lemon: {:?}", parse(&mut Scanner::new("map lemon")));
-
-    println!();
-
     test_lex("ctrl");
     test_lex("a");
     test_lex("-");
@@ -30,7 +15,7 @@ fn main() {
 }
 
 fn test_lex(input: &str) {
-    println!("{}: {:?}", input, lex(&mut Scanner::new(input)));
+    println!("{}: {:#?}", input, lex(&mut Scanner::new(input)));
 }
 
 fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
@@ -56,6 +41,15 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
         eprintln!("failed tokens: {:#?}", tokens);
 
         return Err(ParseError::Message("Failed to finish lexing.".to_string()));
+    }
+
+    // Move the line and column numbers "back" for each token, so that they contain their starting
+    // positions rather than their ending positions.
+    let mut prev_line = 1;
+    let mut prev_col = 1;
+    for token in &mut tokens {
+        mem::swap(&mut token.line, &mut prev_line);
+        mem::swap(&mut token.col, &mut prev_col);
     }
 
     Ok(tokens)
@@ -85,17 +79,17 @@ fn lex_id(scanner: &mut Scanner) -> Result<Token> {
     if buf.is_empty() {
         Err(ParseError::ExpectedId)
     } else {
-        Ok(Token::Id(buf))
+        Ok(Token::new(scanner, TokenKind::Id(buf)))
     }
 }
 
 fn lex_mod(scanner: &mut Scanner) -> Result<Token> {
     if scanner.take_str("ctrl") {
-        Ok(Token::Mod(Mod::Ctrl))
+        Ok(Token::new(scanner, TokenKind::Mod(Mod::Ctrl)))
     } else if scanner.take_str("shift") {
-        Ok(Token::Mod(Mod::Shift))
+        Ok(Token::new(scanner, TokenKind::Mod(Mod::Shift)))
     } else if scanner.take_str("alt") {
-        Ok(Token::Mod(Mod::Alt))
+        Ok(Token::new(scanner, TokenKind::Mod(Mod::Alt)))
     } else {
         Err(ParseError::from(
             "A modifier requires a ctrl, shift, or alt",
@@ -106,7 +100,7 @@ fn lex_mod(scanner: &mut Scanner) -> Result<Token> {
 fn lex_phrase(phrase: &'static str) -> Box<dyn Fn(&mut Scanner) -> Result<Token>> {
     Box::new(move |scanner: &mut Scanner| {
         if scanner.take_str(phrase) {
-            Ok(Token::Phrase(phrase))
+            Ok(Token::new(scanner, TokenKind::Phrase(phrase)))
         } else {
             Err(ParseError::ExpectedPhrase(phrase))
         }
@@ -121,14 +115,31 @@ fn lex_whitespace(scanner: &mut Scanner) -> Result<Token> {
     }
 
     if was_whitespace {
-        Ok(Token::Whitespace)
+        Ok(Token::new(scanner, TokenKind::Whitespace))
     } else {
         Err(ParseError::ExpectedWhitespace)
     }
 }
 
 #[derive(Debug)]
-enum Token {
+pub struct Token {
+    line: usize,
+    col: usize,
+    kind: TokenKind,
+}
+
+impl Token {
+    pub fn new(scanner: &Scanner, kind: TokenKind) -> Self {
+        Token {
+            line: scanner.curr_line,
+            col: scanner.curr_col,
+            kind,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum TokenKind {
     Id(String),
     Mod(Mod),
     Phrase(&'static str),
@@ -156,10 +167,8 @@ fn parse_map(scanner: &mut Scanner) -> Result<Map> {
 fn parse_key(scanner: &mut Scanner) -> Result<Key> {
     match parse_mod(scanner) {
         Ok(mod_enum) => {
-            // FIXME(Chris): Implement custom errors, with display of line and column number
             scanner.expect(&'+')?;
 
-            // TODO(Chris): Implement support for RangeInclusive
             let key_char = scanner
                 .pop_in_range('a'..='z')
                 .ok_or("Failed to find letter")?;
@@ -206,15 +215,31 @@ struct Key {
 }
 
 #[derive(Debug)]
-enum Mod {
+pub enum Mod {
     Ctrl,
     Shift,
     Alt,
 }
 
+pub struct Parser {
+    cursor: usize,
+    tokens: Vec<Token>,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            cursor: 0,
+            tokens,
+        }
+    }
+}
+
 pub struct Scanner {
     cursor: usize,
     characters: Vec<char>,
+    curr_line: usize,
+    curr_col: usize,
 }
 
 impl Scanner {
@@ -222,6 +247,9 @@ impl Scanner {
         Self {
             cursor: 0,
             characters: string.chars().collect(),
+            // Files start at line 1, column 1
+            curr_line: 1,
+            curr_col: 1,
         }
     }
 
@@ -245,6 +273,13 @@ impl Scanner {
     pub fn pop(&mut self) -> Option<&char> {
         match self.characters.get(self.cursor) {
             Some(character) => {
+                if character == &'\n' {
+                    self.curr_line += 1;
+                    self.curr_col = 1;
+                } else {
+                    self.curr_col += 1;
+                }
+
                 self.cursor += 1;
 
                 Some(character)
@@ -298,7 +333,7 @@ impl Scanner {
         match self.characters.get(self.cursor) {
             Some(character) => {
                 if target == character {
-                    self.cursor += 1;
+                    self.pop();
 
                     true
                 } else {
@@ -316,7 +351,7 @@ impl Scanner {
         match self.characters.get(self.cursor) {
             Some(character) => {
                 if target == character {
-                    self.cursor += 1;
+                    self.pop();
 
                     Ok(())
                 } else {
@@ -342,7 +377,11 @@ impl Scanner {
             ind += 1;
         }
 
-        self.cursor = ind;
+        let orig_cursor = self.cursor;
+
+        for _ in orig_cursor..ind {
+            self.pop();
+        }
 
         true
     }
@@ -353,7 +392,7 @@ impl Scanner {
         match self.characters.get(self.cursor) {
             Some(input) => match cb(input) {
                 Some(output) => {
-                    self.cursor += 1;
+                    self.pop();
 
                     Some(output)
                 }
