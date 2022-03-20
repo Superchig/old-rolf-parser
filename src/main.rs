@@ -6,15 +6,16 @@ type ParseResult<T> = std::result::Result<T, ParseError>;
 
 fn main() {
     test_lex("ctrl");
-    test_lex("a");
-    test_lex("-");
-    test_lex("abra");
-    test_lex("map ctrl");
-    test_lex("map ctrl+a");
-    test_lex("map ctrl+k up");
+    // test_lex("a");
+    // test_lex("-");
+    // test_lex("abra");
+    // test_lex("map ctrl");
+    // test_lex("map ctrl+a");
+    // test_lex("map ctrl+k up");
 
     println!();
 
+    test_parse("map ctrl+k");
     test_parse("map ctrl+k up");
 }
 
@@ -26,7 +27,7 @@ fn test_parse(input: &str) {
     match lex(&mut Scanner::new(input)) {
         Ok(tokens) => {
             println!("{}: {:?}", input, parse(&mut Parser::new(tokens)));
-        },
+        }
         Err(err) => eprintln!("{} - error: {}", input, err),
     }
 }
@@ -172,22 +173,30 @@ fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
 
     let key = parse_key(parser)?;
 
-    Ok(Map { key })
+    parser.expect(TokenKind::Whitespace)?;
+
+    let cmd_name = parser.take_id()?;
+
+    Ok(Map { key, cmd_name })
 }
 
 fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
-    parser.expect(TokenKind::Phrase("+"))?;
+    let mod_enum = parser.take_mod()?;
 
-    let mod_enum = *parser.take_mod()?;
+    parser.expect(TokenKind::Phrase("+"))?;
 
     let key_id: Vec<char> = parser.take_id()?.chars().collect();
 
-    Ok(Key { key_char: key_id[0], modifier: Some(mod_enum) })
+    Ok(Key {
+        key_char: key_id[0],
+        modifier: Some(mod_enum),
+    })
 }
 
 #[derive(Debug)]
 struct Map {
     key: Key,
+    cmd_name: String,
 }
 
 #[derive(Debug)]
@@ -203,6 +212,7 @@ pub enum Mod {
     Alt,
 }
 
+#[derive(Debug)]
 pub struct Parser {
     cursor: usize,
     tokens: Vec<Token>,
@@ -241,25 +251,37 @@ impl Parser {
         }
     }
 
-    pub fn take_id(&mut self) -> ParseResult<&String> {
+    pub fn take_id(&mut self) -> ParseResult<String> {
         match self.peek() {
             Some(Token {
                 kind: TokenKind::Id(name),
                 ..
-            }) => Ok(name),
-            Some(_) => Err(ParseError::ExpectedId),
-            None => Err(ParseError::EOF),
+            }) => {
+                let copy = name.clone();
+
+                self.pop();
+
+                Ok(copy)
+            }
+            Some(token) => Err(ParseError::new_pos(token, ParseErrorKind::ExpectedId)),
+            None => Err(ParseError::new(ParseErrorKind::ExpectedId)),
         }
     }
 
-    pub fn take_mod(&mut self) -> ParseResult<&Mod> {
+    pub fn take_mod(&mut self) -> ParseResult<Mod> {
         match self.peek() {
             Some(Token {
                 kind: TokenKind::Mod(mod_enum),
                 ..
-            }) => Ok(mod_enum),
-            Some(_) => Err(ParseError::ExpectedId),
-            None => Err(ParseError::EOF),
+            }) => {
+                let copy = *mod_enum;
+
+                self.pop();
+
+                Ok(copy)
+            }
+            Some(token) => Err(ParseError::new_pos(token, ParseErrorKind::ExpectedMod)),
+            None => Err(ParseError::new(ParseErrorKind::EOF)),
         }
     }
 
@@ -274,31 +296,64 @@ impl Parser {
 
                     Ok(())
                 } else {
-                    Err(ParseError::Expected(target))
+                    Err(ParseError::new_pos(token, ParseErrorKind::Expected(target)))
                 }
             }
-            None => Err(ParseError::Expected(target)),
+            None => Err(ParseError::new(ParseErrorKind::Expected(target))),
         }
     }
 }
 
+// FIXME(Chris): Move EOF to position
 #[derive(Debug)]
-pub enum ParseError {
+pub struct ParseError {
+    position: Option<Position>,
+    kind: ParseErrorKind,
+}
+
+#[derive(Debug)]
+pub struct Position {
+    line: usize,
+    col: usize,
+}
+
+#[derive(Debug)]
+pub enum ParseErrorKind {
     Message(String),
     Expected(TokenKind),
     ExpectedId,
+    ExpectedMod,
     EOF,
+}
+
+impl ParseError {
+    fn new(kind: ParseErrorKind) -> Self {
+        Self {
+            position: None,
+            kind,
+        }
+    }
+
+    fn new_pos(token: &Token, kind: ParseErrorKind) -> Self {
+        Self {
+            position: Some(Position {
+                line: token.line,
+                col: token.col,
+            }),
+            kind,
+        }
+    }
 }
 
 impl From<&str> for ParseError {
     fn from(message: &str) -> Self {
-        ParseError::Message(message.to_string())
+        ParseError::new(ParseErrorKind::Message(message.to_string()))
     }
 }
 
 impl From<String> for ParseError {
     fn from(message: String) -> Self {
-        ParseError::Message(message)
+        ParseError::new(ParseErrorKind::Message(message))
     }
 }
 
