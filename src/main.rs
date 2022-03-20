@@ -1,8 +1,8 @@
 use core::fmt;
-use std::{error::Error, ops, mem};
+use std::{error::Error, mem, ops};
 
+type LexResult<T> = std::result::Result<T, LexError>;
 type ParseResult<T> = std::result::Result<T, ParseError>;
-type Result<T> = ParseResult<T>;
 
 fn main() {
     test_lex("ctrl");
@@ -12,18 +12,31 @@ fn main() {
     test_lex("map ctrl");
     test_lex("map ctrl+a");
     test_lex("map ctrl+k up");
+
+    println!();
+
+    test_parse("map ctrl+k up");
 }
 
 fn test_lex(input: &str) {
     println!("{}: {:#?}", input, lex(&mut Scanner::new(input)));
 }
 
-fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
+fn test_parse(input: &str) {
+    match lex(&mut Scanner::new(input)) {
+        Ok(tokens) => {
+            println!("{}: {:?}", input, parse(&mut Parser::new(tokens)));
+        },
+        Err(err) => eprintln!("{} - error: {}", input, err),
+    }
+}
+
+fn lex(scanner: &mut Scanner) -> LexResult<Vec<Token>> {
     let lex_map = lex_phrase("map ");
     let lex_plus = lex_phrase("+");
 
     // NOTE(Chris): The order matters here, in case one lexing rule conflicts with another.
-    let mut lexers: Vec<&dyn Fn(&mut Scanner) -> Result<Token>> =
+    let mut lexers: Vec<&dyn Fn(&mut Scanner) -> LexResult<Token>> =
         vec![&lex_mod, &lex_whitespace, &lex_map, &lex_plus];
 
     lexers.push(&lex_id);
@@ -40,7 +53,7 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
 
         eprintln!("failed tokens: {:#?}", tokens);
 
-        return Err(ParseError::Message("Failed to finish lexing.".to_string()));
+        return Err(LexError::RemainingInput);
     }
 
     // Move the line and column numbers "back" for each token, so that they contain their starting
@@ -55,7 +68,7 @@ fn lex(scanner: &mut Scanner) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-fn lex_id(scanner: &mut Scanner) -> Result<Token> {
+fn lex_id(scanner: &mut Scanner) -> LexResult<Token> {
     let mut buf = String::new();
 
     loop {
@@ -77,13 +90,13 @@ fn lex_id(scanner: &mut Scanner) -> Result<Token> {
     }
 
     if buf.is_empty() {
-        Err(ParseError::ExpectedId)
+        Err(LexError::ExpectedId)
     } else {
         Ok(Token::new(scanner, TokenKind::Id(buf)))
     }
 }
 
-fn lex_mod(scanner: &mut Scanner) -> Result<Token> {
+fn lex_mod(scanner: &mut Scanner) -> LexResult<Token> {
     if scanner.take_str("ctrl") {
         Ok(Token::new(scanner, TokenKind::Mod(Mod::Ctrl)))
     } else if scanner.take_str("shift") {
@@ -91,23 +104,21 @@ fn lex_mod(scanner: &mut Scanner) -> Result<Token> {
     } else if scanner.take_str("alt") {
         Ok(Token::new(scanner, TokenKind::Mod(Mod::Alt)))
     } else {
-        Err(ParseError::from(
-            "A modifier requires a ctrl, shift, or alt",
-        ))
+        Err(LexError::ExpectedMod)
     }
 }
 
-fn lex_phrase(phrase: &'static str) -> Box<dyn Fn(&mut Scanner) -> Result<Token>> {
+fn lex_phrase(phrase: &'static str) -> Box<dyn Fn(&mut Scanner) -> LexResult<Token>> {
     Box::new(move |scanner: &mut Scanner| {
         if scanner.take_str(phrase) {
             Ok(Token::new(scanner, TokenKind::Phrase(phrase)))
         } else {
-            Err(ParseError::ExpectedPhrase(phrase))
+            Err(LexError::ExpectedPhrase(phrase))
         }
     })
 }
 
-fn lex_whitespace(scanner: &mut Scanner) -> Result<Token> {
+fn lex_whitespace(scanner: &mut Scanner) -> LexResult<Token> {
     let mut was_whitespace = false;
 
     while let Some(_ch) = scanner.pop_in_slice(&[' ', '\t']) {
@@ -117,7 +128,7 @@ fn lex_whitespace(scanner: &mut Scanner) -> Result<Token> {
     if was_whitespace {
         Ok(Token::new(scanner, TokenKind::Whitespace))
     } else {
-        Err(ParseError::ExpectedWhitespace)
+        Err(LexError::ExpectedWhitespace)
     }
 }
 
@@ -138,7 +149,7 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TokenKind {
     Id(String),
     Mod(Mod),
@@ -146,61 +157,32 @@ pub enum TokenKind {
     Whitespace,
 }
 
-fn parse(scanner: &mut Scanner) -> Result<Map> {
-    let result = parse_map(scanner)?;
+fn parse(parser: &mut Parser) -> ParseResult<Map> {
+    let result = parse_map(parser)?;
 
-    if scanner.is_done() {
+    if parser.is_done() {
         Ok(result)
     } else {
         Err(ParseError::from("Input continues beyond map"))
     }
 }
 
-fn parse_map(scanner: &mut Scanner) -> Result<Map> {
-    // scanner.expect_str("map ")?;
+fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
+    parser.expect(TokenKind::Phrase("map "))?;
 
-    let key = parse_key(scanner)?;
+    let key = parse_key(parser)?;
 
     Ok(Map { key })
 }
 
-fn parse_key(scanner: &mut Scanner) -> Result<Key> {
-    match parse_mod(scanner) {
-        Ok(mod_enum) => {
-            scanner.expect(&'+')?;
+fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
+    parser.expect(TokenKind::Phrase("+"))?;
 
-            let key_char = scanner
-                .pop_in_range('a'..='z')
-                .ok_or("Failed to find letter")?;
+    let mod_enum = *parser.take_mod()?;
 
-            Ok(Key {
-                key_char,
-                modifier: Some(mod_enum),
-            })
-        }
-        Err(_) => {
-            let key_char = scanner
-                .pop_in_range('a'..='z')
-                .ok_or("Failed to find letter")?;
+    let key_id: Vec<char> = parser.take_id()?.chars().collect();
 
-            Ok(Key {
-                key_char,
-                modifier: None,
-            })
-        }
-    }
-}
-
-fn parse_mod(scanner: &mut Scanner) -> Result<Mod> {
-    if scanner.take_str("ctrl") {
-        Ok(Mod::Ctrl)
-    } else if scanner.take_str("shift") {
-        Ok(Mod::Shift)
-    } else if scanner.take_str("alt") {
-        Ok(Mod::Alt)
-    } else {
-        Err(ParseError::ExpectedMod)
-    }
+    Ok(Key { key_char: key_id[0], modifier: Some(mod_enum) })
 }
 
 #[derive(Debug)]
@@ -214,7 +196,7 @@ struct Key {
     key_char: char,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Mod {
     Ctrl,
     Shift,
@@ -228,10 +210,95 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self {
-            cursor: 0,
-            tokens,
+        Self { cursor: 0, tokens }
+    }
+
+    /// Returns the current cursor. Useful for reporting errors.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Returns the next character without advancing the cursor.
+    /// AKA "lookahead"
+    pub fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.cursor)
+    }
+
+    /// Returns true if further progress is not possible
+    pub fn is_done(&self) -> bool {
+        self.cursor >= self.tokens.len()
+    }
+
+    /// Returns the next character (if available) and advances the cursor.
+    pub fn pop(&mut self) -> Option<&Token> {
+        match self.tokens.get(self.cursor) {
+            Some(token) => {
+                self.cursor += 1;
+
+                Some(token)
+            }
+            None => None,
         }
+    }
+
+    pub fn take_id(&mut self) -> ParseResult<&String> {
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::Id(name),
+                ..
+            }) => Ok(name),
+            Some(_) => Err(ParseError::ExpectedId),
+            None => Err(ParseError::EOF),
+        }
+    }
+
+    pub fn take_mod(&mut self) -> ParseResult<&Mod> {
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::Mod(mod_enum),
+                ..
+            }) => Ok(mod_enum),
+            Some(_) => Err(ParseError::ExpectedId),
+            None => Err(ParseError::EOF),
+        }
+    }
+
+    /// Returns Some(()) if the `target` is found at the current cursor position, and advances the
+    /// cursor.
+    /// Otherwise, returns None, leaving the cursor unchanged.
+    pub fn expect(&mut self, target: TokenKind) -> ParseResult<()> {
+        match self.tokens.get(self.cursor) {
+            Some(token) => {
+                if target == token.kind {
+                    self.pop();
+
+                    Ok(())
+                } else {
+                    Err(ParseError::Expected(target))
+                }
+            }
+            None => Err(ParseError::Expected(target)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ParseError {
+    Message(String),
+    Expected(TokenKind),
+    ExpectedId,
+    EOF,
+}
+
+impl From<&str> for ParseError {
+    fn from(message: &str) -> Self {
+        ParseError::Message(message.to_string())
+    }
+}
+
+impl From<String> for ParseError {
+    fn from(message: String) -> Self {
+        ParseError::Message(message)
     }
 }
 
@@ -347,7 +414,7 @@ impl Scanner {
     /// Returns Some(()) if the `target` is found at the current cursor position, and advances the
     /// cursor.
     /// Otherwise, returns None, leaving the cursor unchanged.
-    pub fn expect(&mut self, target: &char) -> ParseResult<()> {
+    pub fn expect(&mut self, target: &char) -> LexResult<()> {
         match self.characters.get(self.cursor) {
             Some(character) => {
                 if target == character {
@@ -355,10 +422,10 @@ impl Scanner {
 
                     Ok(())
                 } else {
-                    Err(ParseError::Expected(*target))
+                    Err(LexError::Expected(*target))
                 }
             }
-            None => Err(ParseError::Expected(*target)),
+            None => Err(LexError::Expected(*target)),
         }
     }
 
@@ -404,8 +471,7 @@ impl Scanner {
 }
 
 #[derive(Debug)]
-pub enum ParseError {
-    Message(String),
+pub enum LexError {
     Expected(char),
     ExpectedPhrase(&'static str),
     ExpectedDigit,
@@ -413,24 +479,13 @@ pub enum ParseError {
     ExpectedId,
     ExpectedMod,
     ExpectedWhitespace,
+    RemainingInput,
 }
 
-impl From<&str> for ParseError {
-    fn from(message: &str) -> Self {
-        ParseError::Message(message.to_string())
-    }
-}
-
-impl From<String> for ParseError {
-    fn from(message: String) -> Self {
-        ParseError::Message(message)
-    }
-}
-
-impl fmt::Display for ParseError {
+impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl Error for ParseError {}
+impl Error for LexError {}
