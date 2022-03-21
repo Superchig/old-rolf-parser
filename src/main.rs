@@ -16,7 +16,7 @@ fn main() {
     println!();
 
     // test_parse("map ctrl+k"); // This should result in an ExpectedId error
-    test_parse("map ctrl+k up\nmap ctrl+j down");
+    test_parse("map ctrl+k up\nmap j down");
 }
 
 fn test_lex(input: &str) {
@@ -231,15 +231,22 @@ fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
 
 // FIXME(Chris): Make the modifier key optional
 fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
-    let mod_enum = parser.take_mod()?;
+    let modifier = match parser.take_mod() {
+        Ok(modifier) => {
+            parser.expect(TokenKind::Phrase("+"))?;
 
-    parser.expect(TokenKind::Phrase("+"))?;
+            Some(modifier)
+        }
+        Err(_) => {
+            None
+        }
+    };
 
     let key_id: Vec<char> = parser.take_id()?.chars().collect();
 
     Ok(Key {
         key_char: key_id[0],
-        modifier: Some(mod_enum),
+        modifier,
     })
 }
 
