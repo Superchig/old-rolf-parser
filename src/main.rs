@@ -47,7 +47,10 @@ fn lex(scanner: &mut Scanner) -> LexResult<Vec<Token>> {
     'scanner: while !scanner.is_done() {
         for lexer in &lexers {
             if let Ok(token) = lexer(scanner) {
-                tokens.push(token);
+                // Ignore whitespace
+                if token.kind != TokenKind::Whitespace {
+                    tokens.push(token);
+                }
                 continue 'scanner;
             }
         }
@@ -171,11 +174,7 @@ fn parse(parser: &mut Parser) -> ParseResult<Map> {
 fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
     parser.expect(TokenKind::Phrase("map"))?;
 
-    parser.expect(TokenKind::Whitespace)?;
-
     let key = parse_key(parser)?;
-
-    parser.expect(TokenKind::Whitespace)?;
 
     let cmd_name = parser.take_id()?;
 
