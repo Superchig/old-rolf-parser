@@ -16,7 +16,8 @@ fn main() {
     println!();
 
     // test_parse("map ctrl+k"); // This should result in an ExpectedId error
-    test_parse("map ctrl+k up\nmap j down");
+    // test_parse("map ctrl+k up\nmap j down");
+    test_parse("map up up\nmap down down");
 }
 
 fn test_lex(input: &str) {
@@ -229,7 +230,6 @@ fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
     Ok(Map { key, cmd_name })
 }
 
-// FIXME(Chris): Make the modifier key optional
 fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
     let modifier = match parser.take_mod() {
         Ok(modifier) => {
@@ -242,10 +242,10 @@ fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
         }
     };
 
-    let key_id: Vec<char> = parser.take_id()?.chars().collect();
+    let key = parser.take_id()?;
 
     Ok(Key {
-        key_char: key_id[0],
+        key,
         modifier,
     })
 }
@@ -268,7 +268,7 @@ pub struct Map {
 #[allow(dead_code)]
 struct Key {
     modifier: Option<Mod>,
-    key_char: char,
+    key: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
