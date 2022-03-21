@@ -161,14 +161,22 @@ pub enum TokenKind {
     Whitespace,
 }
 
-fn parse(parser: &mut Parser) -> ParseResult<Map> {
-    let result = parse_map(parser)?;
+fn parse(parser: &mut Parser) -> ParseResult<Program> {
+    let result = parse_program(parser)?;
 
     if parser.is_done() {
         Ok(result)
     } else {
         Err(ParseError::from("Input continues beyond map"))
     }
+}
+
+fn parse_program(parser: &mut Parser) -> ParseResult<Program> {
+    Ok(vec![parse_statement(parser)?])
+}
+
+fn parse_statement(parser: &mut Parser) -> ParseResult<Statement> {
+    Ok(Statement::Map(parse_map(parser)?))
 }
 
 fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
@@ -194,13 +202,22 @@ fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
     })
 }
 
+pub type Program = Vec<Statement>;
+
 #[derive(Debug)]
-struct Map {
+pub enum Statement {
+    Map(Map)
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct Map {
     key: Key,
     cmd_name: String,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Key {
     modifier: Option<Mod>,
     key_char: char,
@@ -305,7 +322,9 @@ impl Parser {
     }
 }
 
+// FIXME(Chris): Remove dead code ignores
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ParseError {
     position: Position,
     kind: ParseErrorKind,
