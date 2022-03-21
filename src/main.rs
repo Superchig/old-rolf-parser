@@ -282,7 +282,7 @@ impl Parser {
                 Ok(copy)
             }
             Some(token) => Err(ParseError::new_pos(token, ParseErrorKind::ExpectedMod)),
-            None => Err(ParseError::new(ParseErrorKind::EOF)),
+            None => Err(ParseError::new(ParseErrorKind::ExpectedMod)),
         }
     }
 
@@ -305,17 +305,19 @@ impl Parser {
     }
 }
 
-// FIXME(Chris): Move EOF to position/conflict area
 #[derive(Debug)]
 pub struct ParseError {
-    position: Option<Position>,
+    position: Position,
     kind: ParseErrorKind,
 }
 
 #[derive(Debug)]
-pub struct Position {
-    line: usize,
-    col: usize,
+pub enum Position {
+    EOF,
+    Pos {
+        line: usize,
+        col: usize,
+    }
 }
 
 #[derive(Debug)]
@@ -324,23 +326,22 @@ pub enum ParseErrorKind {
     Expected(TokenKind),
     ExpectedId,
     ExpectedMod,
-    EOF,
 }
 
 impl ParseError {
     fn new(kind: ParseErrorKind) -> Self {
         Self {
-            position: None,
+            position: Position::EOF,
             kind,
         }
     }
 
     fn new_pos(token: &Token, kind: ParseErrorKind) -> Self {
         Self {
-            position: Some(Position {
+            position: Position::Pos {
                 line: token.line,
                 col: token.col,
-            }),
+            },
             kind,
         }
     }
