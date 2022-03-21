@@ -15,8 +15,8 @@ fn main() {
 
     println!();
 
-    test_parse("map ctrl+k");
-    test_parse("map ctrl+k up");
+    // test_parse("map ctrl+k"); // This should result in an ExpectedId error
+    test_parse("map ctrl+k up\nmap ctrl+j down");
 }
 
 fn test_lex(input: &str) {
@@ -38,19 +38,27 @@ fn lex(scanner: &mut Scanner) -> LexResult<Vec<Token>> {
 
     // NOTE(Chris): The order matters here, in case one lexing rule conflicts with another.
     let mut lexers: Vec<&dyn Fn(&mut Scanner) -> LexResult<Token>> =
-        vec![&lex_mod, &lex_whitespace, &lex_map, &lex_plus];
+        vec![&lex_mod, &lex_newline, &lex_whitespace, &lex_map, &lex_plus];
 
     lexers.push(&lex_id);
 
     let mut tokens = vec![];
 
+    let mut prev_line = 1;
+    let mut prev_col = 1;
     'scanner: while !scanner.is_done() {
         for lexer in &lexers {
-            if let Ok(token) = lexer(scanner) {
+            if let Ok(mut token) = lexer(scanner) {
+                // Move the line and column numbers "back" for each token, so that they contain their starting
+                // positions rather than their ending positions.
+                mem::swap(&mut token.line, &mut prev_line);
+                mem::swap(&mut token.col, &mut prev_col);
+
                 // Ignore whitespace
                 if token.kind != TokenKind::Whitespace {
                     tokens.push(token);
                 }
+
                 continue 'scanner;
             }
         }
@@ -58,15 +66,6 @@ fn lex(scanner: &mut Scanner) -> LexResult<Vec<Token>> {
         eprintln!("failed tokens: {:#?}", tokens);
 
         return Err(LexError::RemainingInput);
-    }
-
-    // Move the line and column numbers "back" for each token, so that they contain their starting
-    // positions rather than their ending positions.
-    let mut prev_line = 1;
-    let mut prev_col = 1;
-    for token in &mut tokens {
-        mem::swap(&mut token.line, &mut prev_line);
-        mem::swap(&mut token.col, &mut prev_col);
     }
 
     Ok(tokens)
@@ -136,6 +135,14 @@ fn lex_whitespace(scanner: &mut Scanner) -> LexResult<Token> {
     }
 }
 
+fn lex_newline(scanner: &mut Scanner) -> LexResult<Token> {
+    if scanner.take(&'\n') {
+        Ok(Token::new(scanner, TokenKind::Newline))
+    } else {
+        Err(LexError::ExpectedNewline)
+    }
+}
+
 #[derive(Debug)]
 pub struct Token {
     line: usize,
@@ -159,6 +166,7 @@ pub enum TokenKind {
     Mod(Mod),
     Phrase(&'static str),
     Whitespace,
+    Newline,
 }
 
 fn parse(parser: &mut Parser) -> ParseResult<Program> {
@@ -167,12 +175,44 @@ fn parse(parser: &mut Parser) -> ParseResult<Program> {
     if parser.is_done() {
         Ok(result)
     } else {
-        Err(ParseError::from("Input continues beyond map"))
+        Err(ParseError::new_pos(
+            parser.peek().unwrap(),
+            ParseErrorKind::RemainingTokens,
+        ))
     }
 }
 
 fn parse_program(parser: &mut Parser) -> ParseResult<Program> {
-    Ok(vec![parse_statement(parser)?])
+    let mut program = vec![];
+
+    loop {
+        match parse_statement(parser) {
+            Ok(statement) => {
+                program.push(statement);
+
+                match parser.peek() {
+                    Some(Token {
+                        kind: TokenKind::Newline,
+                        ..
+                    }) => {
+                        parser.pop();
+                    }
+                    Some(token) => {
+                        return Err(ParseError::new_pos(
+                            token,
+                            ParseErrorKind::Expected(TokenKind::Newline),
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
+    }
+
+    Ok(program)
 }
 
 fn parse_statement(parser: &mut Parser) -> ParseResult<Statement> {
@@ -189,6 +229,7 @@ fn parse_map(parser: &mut Parser) -> ParseResult<Map> {
     Ok(Map { key, cmd_name })
 }
 
+// FIXME(Chris): Make the modifier key optional
 fn parse_key(parser: &mut Parser) -> ParseResult<Key> {
     let mod_enum = parser.take_mod()?;
 
@@ -206,7 +247,7 @@ pub type Program = Vec<Statement>;
 
 #[derive(Debug)]
 pub enum Statement {
-    Map(Map)
+    Map(Map),
 }
 
 #[derive(Debug)]
@@ -333,18 +374,17 @@ pub struct ParseError {
 #[derive(Debug)]
 pub enum Position {
     EOF,
-    Pos {
-        line: usize,
-        col: usize,
-    }
+    Pos { line: usize, col: usize },
 }
 
 #[derive(Debug)]
 pub enum ParseErrorKind {
     Message(String),
+    RemainingTokens,
     Expected(TokenKind),
     ExpectedId,
     ExpectedMod,
+    ExpectedEof,
 }
 
 impl ParseError {
@@ -363,18 +403,6 @@ impl ParseError {
             },
             kind,
         }
-    }
-}
-
-impl From<&str> for ParseError {
-    fn from(message: &str) -> Self {
-        ParseError::new(ParseErrorKind::Message(message.to_string()))
-    }
-}
-
-impl From<String> for ParseError {
-    fn from(message: String) -> Self {
-        ParseError::new(ParseErrorKind::Message(message))
     }
 }
 
@@ -555,6 +583,7 @@ pub enum LexError {
     ExpectedId,
     ExpectedMod,
     ExpectedWhitespace,
+    ExpectedNewline,
     RemainingInput,
 }
 
